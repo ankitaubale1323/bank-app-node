@@ -1,0 +1,140 @@
+name: CI 
+
+on:
+ push:
+  branches: [main]
+  paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "helm/**"
+      - "terraform/**"
+      - "argocd/**"
+
+    
+permissions:
+    contents: read
+jobs:
+  hadolint:
+    name: Hadolint — Dockerfile Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint backend/Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: backend/Dockerfile
+          failure-threshold: error    # warn=pass, error=fail
+          format: sarif
+          output-file: hadolint-backend.sarif
+          no-fail: false
+
+      - name: Lint frontend/Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: frontend/Dockerfile
+          failure-threshold: error
+          format: sarif
+          output-file: hadolint-frontend.sarif
+          no-fail: false
+
+      - name: Upload Hadolint SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: hadolint-backend.sarif
+          category: hadolint-backend
+  # ── Job 1: Gitleaks Secret Scan ─────────────────────
+  secret-scan:
+    name: Gitleaks secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+         fetch-depth: 0
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+# ── Job 2: SonarQube Scan ───────────────────────────
+  
+  sonarqube:
+    name: SonarQube
+    runs-on: ubuntu-latest
+    needs: secret-scan
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+        with:  
+         fetch-depth: 0
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+  # ── Job 3: Build → Trivy Scan → Push ────────────────
+  build-scan-push:
+    name: Build Scan Push
+    runs-on: ubuntu-latest
+    needs: sonarqube
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build backend image
+        run: |
+          docker build \
+            -t ${{ secrets.DOCKERHUB_USERNAME }}/paisa-bank-backend:latest \
+            -t ${{ secrets.DOCKERHUB_USERNAME }}/paisa-bank-backend:${{ github.sha }} \
+            ./backend
+
+      - name: Build frontend image
+        run: |
+          docker build \
+            -t ${{ secrets.DOCKERHUB_USERNAME }}/paisa-bank-frontend:latest \
+            -t ${{ secrets.DOCKERHUB_USERNAME }}/paisa-bank-frontend:${{ github.sha }} \
+            ./frontend
+
+      - name: Trivy scan backend
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/paisa-bank-backend:latest
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
+      - name: Trivy scan frontend
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/paisa-bank-frontend:latest
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
+      - name: Push backend to Docker Hub
+        run: |
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/paisa-bank-backend:latest
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/paisa-bank-backend:${{ github.sha }}
+
+      - name: Push frontend to Docker Hub
+        run: |
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/paisa-bank-frontend:latest
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/paisa-bank-frontend:${{ github.sha }}
+
+      - name: Print image tags
+        run: |
+          echo "Backend pushed:  ${{ secrets.DOCKERHUB_USERNAME }}/paisa-bank-backend:${{ github.sha }}"
+          echo "Frontend pushed: ${{ secrets.DOCKERHUB_USERNAME }}/paisa-bank-frontend:${{ github.sha }}"
+
+
