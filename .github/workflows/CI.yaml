@@ -126,7 +126,8 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
           severity: CRITICAL,HIGH
-
+          trivy-config: trivy.yaml
+      
       - name: Trivy scan frontend
         uses: aquasecurity/trivy-action@master
         with:
@@ -135,6 +136,7 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
           severity: CRITICAL,HIGH
+          trivy-config: trivy.yaml
 
       - name: Push backend to Docker Hub
         run: |
