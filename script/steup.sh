@@ -1,4 +1,4 @@
-```bash id="yoq9t1"
+
 #!/bin/bash
 
 set -e
@@ -134,4 +134,4 @@ echo "Password: admin"
 echo ""
 echo "Configure AWS:"
 echo "aws configure"
-```
+
