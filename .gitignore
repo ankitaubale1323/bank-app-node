@@ -4,3 +4,6 @@
 .env.production
 backend/.env
 frontend/.env
+# AWS CLI installation files (should not be in repo)
+script/aws/
+script/awscliv2.zip

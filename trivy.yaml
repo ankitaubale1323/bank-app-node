@@ -1,0 +1,4 @@
+# Skip npm system tool vulnerabilities - not our app code
+skip-dirs:
+  - usr/local/lib/node_modules/npm
+  - opt/yarn-v1.22.22

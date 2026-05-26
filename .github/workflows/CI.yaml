@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  security-events: write   # needed for uploading SARIF results
 
 jobs:
 
@@ -42,14 +43,14 @@ jobs:
           no-fail: false
 
       - name: Upload backend Hadolint SARIF
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: hadolint-backend.sarif
           category: hadolint-backend
 
       - name: Upload frontend Hadolint SARIF
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: hadolint-frontend.sarif
@@ -125,7 +126,8 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
           severity: CRITICAL,HIGH
-
+          trivy-config: trivy.yaml
+      
       - name: Trivy scan frontend
         uses: aquasecurity/trivy-action@master
         with:
@@ -134,6 +136,7 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
           severity: CRITICAL,HIGH
+          trivy-config: trivy.yaml
 
       - name: Push backend to Docker Hub
         run: |
