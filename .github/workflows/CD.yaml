@@ -1,0 +1,95 @@
+name: CD
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && vars.DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
+
+      - name: Fetch secrets from AWS Secrets Manager
+        run: |
+          SECRET=$(aws secretsmanager get-secret-value \
+            --secret-id paisa-bank/app \
+            --query SecretString \
+            --output text \
+            --region ap-south-1)
+
+          echo "DOCKERHUB_USERNAME=$(echo $SECRET | jq -r .DOCKERHUB_USERNAME)" >> $GITHUB_ENV
+          echo "MONGODB_URI=$(echo $SECRET | jq -r .MONGODB_URI)"               >> $GITHUB_ENV
+          echo "JWT_SECRET=$(echo $SECRET | jq -r .JWT_SECRET)"                 >> $GITHUB_ENV
+          echo "OLLAMA_URL=$(echo $SECRET | jq -r .OLLAMA_URL)"                 >> $GITHUB_ENV
+          echo "OLLAMA_MODEL=$(echo $SECRET | jq -r .OLLAMA_MODEL)"             >> $GITHUB_ENV
+
+      - name: SSH and deploy to EC2
+        uses: appleboy/ssh-action@v1
+        with:
+          host:     ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key:      ${{ secrets.EC2_SSH_KEY }}
+          envs:     DOCKERHUB_USERNAME,MONGODB_URI,JWT_SECRET,OLLAMA_URL,OLLAMA_MODEL
+          script: |
+
+            # Install docker compose if not present
+            if ! docker compose version &>/dev/null; then
+              sudo apt install docker-compose-v2 -y
+            fi
+
+            # Clone repo if first time, else pull latest code
+            if [ ! -d ~/bank-app-node ]; then
+              git clone https://github.com/ankitaubale1323/bank-app-node.git \
+                ~/bank-app-node
+            fi
+
+            cd ~/bank-app-node
+            git pull origin main
+
+            # Login to Docker Hub
+            echo "${{ secrets.DOCKERHUB_TOKEN }}" | \
+              docker login -u ${DOCKERHUB_USERNAME} --password-stdin
+
+            # Write .env file from AWS Secrets Manager values
+            cat > .env << ENVEOF
+            DOCKERHUB_USERNAME=${DOCKERHUB_USERNAME}
+            MONGODB_URI=${MONGODB_URI}
+            JWT_SECRET=${JWT_SECRET}
+            OLLAMA_URL=${OLLAMA_URL}
+            OLLAMA_MODEL=${OLLAMA_MODEL}
+            ENVEOF
+
+            # Pull latest images from Docker Hub
+            docker compose pull
+
+            # Stop old containers and start new ones
+            docker compose down --remove-orphans
+            docker compose up -d
+
+            # Pull llama3.2 model if not already downloaded
+            echo "Waiting for Ollama to start..."
+            sleep 15
+            docker exec paisabank-ollama ollama pull llama3.2 || true
+
+            # Clean up old images
+            docker image prune -f
+
+            # Verify all containers running
+            echo "── Container status ──"
+            docker ps
+
+            # Health check
+            sleep 10
+            curl -sf http://localhost/api/health \
+              && echo "✅ App is healthy" \
+              || echo "⚠️ Health check failed — check: docker logs paisabank-backend"
